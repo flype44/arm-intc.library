@@ -1,0 +1,20 @@
+==id $Id: arm-intc_lib.sfd 0.1 $
+* "arm-intc.library"
+==base _ArmIntcBase
+==basetype struct Library *
+==libname arm-intc.library
+==include <exec/types.h>
+==include <exec/interrupts.h>
+==include <utility/tagitem.h>
+==include <libraries/arm-intc.h>
+==bias 30
+==public
+LONG AIC_AddIntServer(ULONG irq, struct Interrupt *interrupt) (D0,A1)
+LONG AIC_RemIntServer(ULONG irq, struct Interrupt *interrupt) (D0,A1)
+LONG AIC_EnableInt(ULONG irq) (D0)
+LONG AIC_DisableInt(ULONG irq) (D0)
+LONG AIC_GetInterrupt(APTR key, ULONG index) (A0,D0)
+ULONG AIC_QueryInfoTagList(ULONG irq, CONST struct TagItem *tagList) (D0,A0)
+==varargs
+ULONG AIC_QueryInfoTags(ULONG irq, ULONG tag1Type, ...) (D0,A0)
+==end

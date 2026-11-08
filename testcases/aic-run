@@ -1,0 +1,55 @@
+; aic-run: every test of arm-intc.library on this machine, one after the other; the results are added to aic-results.txt.
+; Usage: CD to the folder that holds aic-run, aic-probe, aic-test and arm-intc.library, then: Execute aic-run
+; A step that fails stops the run before the next, more daring one. Nothing is installed: the library is opened from this folder.
+; Each step closes the results file before the next starts: if the machine stops, what came before is on the disk.
+
+FailAt 21
+Stack 20000
+
+Echo "*N*N################ aic-run 0.4" >>aic-results.txt
+Date >>aic-results.txt
+Version >>aic-results.txt
+Version arm-intc.library FILE >>aic-results.txt
+Avail >>aic-results.txt
+
+Echo "*N=== 1. aic-probe, read only" >>aic-results.txt
+aic-probe >>aic-results.txt
+If WARN
+    Echo "*N=== stopped: the read only probe failed" >>aic-results.txt
+    Skip End
+EndIf
+
+Echo "*N=== 2. aic-probe TIMER N=100, a real line without the library" >>aic-results.txt
+aic-probe TIMER N=100 >>aic-results.txt
+If WARN
+    Echo "*N=== stopped: the real line failed without the library" >>aic-results.txt
+    Skip End
+EndIf
+
+Echo "*N=== 3. aic-test N=100, the library" >>aic-results.txt
+aic-test LIB=arm-intc.library N=100 >>aic-results.txt
+If WARN
+    Echo "*N=== stopped: the library failed a test" >>aic-results.txt
+    Skip End
+EndIf
+
+Echo "*N=== 4. aic-test STORM, the storm guard" >>aic-results.txt
+aic-test LIB=arm-intc.library N=10 STORM >>aic-results.txt
+If WARN
+    Echo "*N=== the storm test failed" >>aic-results.txt
+    Skip End
+EndIf
+
+; Last: it reads the pixelvalve of the HDMI output, which may stall the bus if the firmware left it unpowered (no HDMI picture)
+Echo "*N=== 5. aic-test VBLANK, the vertical blank of the HDMI output (VideoCore.card on a VC4)" >>aic-results.txt
+aic-test LIB=arm-intc.library N=10 VBLANK >>aic-results.txt
+If WARN
+    Echo "*N=== the vblank test failed" >>aic-results.txt
+    Skip End
+EndIf
+
+Echo "*N=== all steps passed" >>aic-results.txt
+
+Lab End
+Avail >>aic-results.txt
+Echo "aic-run: done, the results are in aic-results.txt"

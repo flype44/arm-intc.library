@@ -16,10 +16,15 @@
 
 #include "base.h"
 
+extern const char libraryName[];
+
 /*
     Adds a server to a line, by ln_Pri, highest first, after those of the same priority. The dispatcher walks the chains at level 6:
     they change with the interrupts disabled. The first server of the library puts the dispatcher on the INTB_EXTER chain, before
     any line is enabled; the first server of a line enables it, last, so that the server may be called at once.
+    The first server also installs the reset guard (emu68-common), which opens keyboard.device: here, from the task of a driver,
+    and not in AIC_LibInit(), which may run in the ROM before keyboard.device exists. It stays until the expunge. Where it cannot
+    be installed, the server is added all the same, and the next server tries again.
 */
 LONG L_AIC_AddIntServer(
     REGARG(ULONG irq, "d0"),
@@ -38,6 +43,11 @@ LONG L_AIC_AddIntServer(
         return AICERR_BADIRQ;
 
     line = &base->aib_Lines[irq];
+
+    Forbid();
+    if (!base->aib_Guarded)
+        base->aib_Guarded = reset_guard_install(&base->aib_ResetGuard, SysBase, AIC_PrepareReset, base, (CONST_STRPTR)libraryName);
+    Permit();
 
     Disable();
 

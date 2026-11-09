@@ -20,13 +20,15 @@
 
 #include <libraries/arm-intc.h>
 
+#include <reset_guard.h>
+
 /* The version comes from project() in CMakeLists.txt, which defines AIC_VERSION and AIC_REVISION. These are only for a build that does
    not go through CMake: keep them equal to project(). */
 #ifndef AIC_VERSION
 #define AIC_VERSION         0
 #endif
 #ifndef AIC_REVISION
-#define AIC_REVISION        1
+#define AIC_REVISION        3
 #endif
 
 #define AIC_BANKS           3           /* bank 0: the ARM lines, banks 1 and 2: the GPU lines */
@@ -57,7 +59,7 @@ struct ArmIntcBase
     ULONG               aib_Controller;     /* where the 68k sees the registers of the ARM control block */
     ULONG               aib_Local;          /* where the 68k sees the local controller of the cores */
     ULONG               aib_GpuRouting;     /* LOCAL_GPU_ROUTING as it was read at the start */
-    ULONG               aib_StaleLines;     /* lines found enabled at the start */
+    ULONG               aib_StaleLines;     /* lines found enabled at the start, left as they were */
 
     ULONG               aib_Enabled[AIC_BANKS]; /* the lines this library enabled, one bit each, as the enable registers */
     ULONG               aib_ServerCount;
@@ -65,6 +67,9 @@ struct ArmIntcBase
     ULONG               aib_ForeignPasses;  /* level 6 interrupts in which none did */
 
     struct Interrupt    aib_Dispatcher;     /* the INTB_EXTER server, on the chain while a line has a server */
+
+    struct reset_guard  aib_ResetGuard;     /* emu68-common: AIC_PrepareReset() before a reset of AmigaOS */
+    BOOL                aib_Guarded;        /* TRUE once the reset guard is installed (by the first server), until the expunge */
 
     struct AicLine      aib_Lines[AIC_IRQ_COUNT];
 };
@@ -91,9 +96,10 @@ ULONG L_AIC_QueryInfoTagList(REGARG(ULONG irq, "d0"), REGARG(const struct TagIte
 
 /* The controllers in the device tree, and the lines (controller.c) */
 BOOL AIC_FindController(struct ArmIntcBase *base);
-ULONG AIC_CleanSlate(struct ArmIntcBase *base);
+ULONG AIC_CountEnabled(struct ArmIntcBase *base);
 void AIC_LineOn(struct ArmIntcBase *base, ULONG irq);
 void AIC_LineOff(struct ArmIntcBase *base, ULONG irq);
+void AIC_PrepareReset(APTR user);
 
 /* The dispatcher (dispatch.c): AIC_Dispatcher() and AIC_CallServer() are assembly, see there */
 ULONG AIC_Dispatcher(void);

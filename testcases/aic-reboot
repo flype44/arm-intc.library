@@ -1,0 +1,55 @@
+; aic-reboot 0.2: the reset guard of arm-intc.library on a real ColdReboot(), and its counter-proof. Run it three times from the
+; same folder, the machine restarts by itself after the first two:
+;   1. the tests of aic-test, then a server on line 33 and ColdReboot();
+;   2. after the restart, aic-probe: ENABLE1 must NOT have bit 1 (line 33, mask 00000002): the reset guard disabled it.
+;      Then the counter-proof: line 33 enabled by hand, without the library, and ColdReboot();
+;   3. after the restart, aic-probe: ENABLE1 MUST have bit 1: without the guard the line survives the reset. aic-test LINEOFF
+;      disables it again.
+; Other bits of ENABLE1 belong to other drivers (bit 9: line 41, USB).
+; It needs a machine where no driver holds the library: run 1 checks a clean start, and the counter-proof needs it out of memory.
+; Usage: CD to the folder that holds aic-reboot, aic-probe, aic-test and arm-intc.library, then: Execute aic-reboot
+; aic-test prints to the screen before a restart (a file being written is lost with the reset); the rest goes to aic-reboot.txt.
+
+FailAt 21
+Stack 20000
+
+If EXISTS aic-reboot-control
+    Echo "*N=== 3. after the counter-proof restart: aic-probe, read only (ENABLE1 MUST have bit 1)" >>aic-reboot.txt
+    Date >>aic-reboot.txt
+    aic-probe >>aic-reboot.txt
+    aic-test LIB=arm-intc.library LINEOFF >>aic-reboot.txt
+    Delete aic-reboot-control QUIET
+    Echo "aic-reboot: done, the results are in aic-reboot.txt (ENABLE1 of steps 2 and 3)"
+    Quit
+EndIf
+
+If EXISTS aic-reboot-armed
+    Echo "*N=== 2. after the restart with the guard: aic-probe, read only (ENABLE1 must NOT have bit 1)" >>aic-reboot.txt
+    Date >>aic-reboot.txt
+    aic-probe >>aic-reboot.txt
+    Delete aic-reboot-armed QUIET
+    Echo "control" >aic-reboot-control
+    ; The file system writes its buffers out meanwhile
+    Wait 3
+    aic-test LIB=arm-intc.library CONTROL
+    ; Here only when it did not restart
+    Delete aic-reboot-control QUIET
+    Echo "=== the counter-proof did not start, no restart" >>aic-reboot.txt
+    Echo "aic-reboot: the counter-proof did not start (see the screen)"
+    Quit
+EndIf
+
+Echo "*N*N################ aic-reboot 0.2" >>aic-reboot.txt
+Date >>aic-reboot.txt
+Version arm-intc.library FILE >>aic-reboot.txt
+Echo "=== 1. before: aic-probe, read only" >>aic-reboot.txt
+aic-probe >>aic-reboot.txt
+Echo "armed" >aic-reboot-armed
+; The file system writes its buffers out meanwhile
+Wait 3
+
+aic-test LIB=arm-intc.library N=20 REBOOT
+; Here only when a test failed: no restart
+Delete aic-reboot-armed QUIET
+Echo "=== aic-test failed, no restart" >>aic-reboot.txt
+Echo "aic-reboot: a test failed (see the screen), no restart"

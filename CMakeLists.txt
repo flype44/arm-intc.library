@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.30.0)
-project(arm-intc.library VERSION 0.1.0)
+project(arm-intc.library VERSION 0.3.0 LANGUAGES C ASM)
 
 # "make install" gathers the products in build/install/: libs/ the library for LIBS:, sdk/ what a developer needs
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
@@ -11,6 +11,13 @@ endif()
 set(DEVICETREE_DIR ${CMAKE_SOURCE_DIR}/devicetree.resource CACHE PATH "the sources of devicetree.resource")
 if(NOT EXISTS ${DEVICETREE_DIR}/sfd/devicetree_lib.sfd)
     message(FATAL_ERROR "no ${DEVICETREE_DIR}/sfd/devicetree_lib.sfd: git submodule update --init, or -DDEVICETREE_DIR=<path>")
+endif()
+
+# emu68-common (Rondoval's support code of the Emu68 drivers): its reset guard (reset_guard.c, and the memset() it calls) is linked
+# into the library. The submodule emu68-common/, or another copy with -DEMU68_COMMON_DIR=<path>.
+set(EMU68_COMMON_DIR ${CMAKE_SOURCE_DIR}/emu68-common CACHE PATH "the sources of emu68-common")
+if(NOT EXISTS ${EMU68_COMMON_DIR}/src/reset_guard.c)
+    message(FATAL_ERROR "no ${EMU68_COMMON_DIR}/src/reset_guard.c: git submodule update --init, or -DEMU68_COMMON_DIR=<path>")
 endif()
 
 include(cmake/verstring.cmake)
@@ -35,6 +42,8 @@ add_executable(arm-intc.library
     src/aic_disableint.c
     src/aic_getinterrupt.c
     src/aic_queryinfotaglist.c
+    ${EMU68_COMMON_DIR}/src/reset_guard.c
+    ${EMU68_COMMON_DIR}/src/memset_movem.S
     src/end.c
 )
 
@@ -54,7 +63,8 @@ if(AIC_DEBUG)
     target_compile_definitions(arm-intc.library PRIVATE AIC_DEBUG)
 endif()
 
-target_include_directories(arm-intc.library PRIVATE include src)
+# emu68-common last: its bare names (types.h, memory.h) must not hide others
+target_include_directories(arm-intc.library PRIVATE include src ${EMU68_COMMON_DIR}/include)
 target_link_options(arm-intc.library PRIVATE -ffreestanding -nostdlib -nostartfiles -s -Wl,-e,__start)
 target_link_libraries(arm-intc.library devicetree arm_intc)
 
@@ -74,7 +84,7 @@ add_executable(aic-probe
     src/aic_getinterrupt.c
 )
 target_compile_options(aic-probe PRIVATE -O2 -m68040 -fomit-frame-pointer -Wall -Wno-pointer-sign -Wno-main -fno-tree-loop-distribute-patterns)
-target_include_directories(aic-probe PRIVATE include src)
+target_include_directories(aic-probe PRIVATE include src ${EMU68_COMMON_DIR}/include)
 target_link_options(aic-probe PRIVATE -ffreestanding -m68040 -nostdlib -nostartfiles -Wl,-e,__start)
 target_link_libraries(aic-probe amiga devicetree arm_intc)
 
@@ -91,7 +101,7 @@ target_link_libraries(aic-test amiga devicetree arm_intc)
 
 install(TARGETS arm-intc.library DESTINATION libs)
 install(TARGETS aic-probe aic-test DESTINATION tools)
-install(FILES testcases/aic-run DESTINATION tools)
+install(FILES testcases/aic-run testcases/aic-reboot DESTINATION tools)
 install(FILES sfd/arm-intc_lib.sfd DESTINATION sdk/sfd)
 install(FILES Autodocs/arm-intc.doc Autodocs/arm-intc.md DESTINATION sdk/Autodocs)
 install(FILES include/libraries/arm-intc.h DESTINATION sdk/include/libraries)

@@ -1,5 +1,0 @@
-; use-emu68-11: the next start of the Pi boots Emu68 1.1 (kernel/Emu68-11, boot/cmdline11.txt, overlays/).
-; CD to the folder of this script first. A reset of the Amiga does not restart the Pi: switch the Amiga off and on.
-; use-emu68-107 puts the CONFIG.TXT of CaffeineOS back.
-Copy /CONFIG-11.TXT TO /CONFIG.TXT
-Echo "Emu68 1.1 at the next power on: switch the Amiga off and on."

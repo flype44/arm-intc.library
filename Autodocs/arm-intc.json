@@ -23,13 +23,17 @@
     },
     {
       "title": "WARM REBOOT",
-      "text": "When AmigaOS restarts and the Raspberry Pi does not, the lines that were enabled stay enabled. When it starts, the library disables every line that it finds enabled (AICI_StaleLines counts them). A driver clears its device before it adds its server."
+      "text": "When AmigaOS restarts and the Raspberry Pi does not, the lines that were enabled stay enabled, with no server to clear their devices.\n\nThe first server added installs a reset guard (reset_guard of emu68-common, by Rondoval). On ColdReboot() and on Ctrl-Amiga-Amiga it disables every line that the library enabled, once, before the reset goes on. The guard patches exec.library/ColdReboot() with SetFunction() and adds a reset handler to keyboard.device. AICI_ResetGuard tells whether it is installed. It stays until the library is expunged.\n\nWhen it starts, the library counts the lines that it finds enabled (AICI_StaleLines) and leaves them as they are. Such a line may belong to a driver that drives the controller itself (see OTHER DRIVERS).\n\nA driver clears its device before it adds its server."
+    },
+    {
+      "title": "OTHER DRIVERS",
+      "text": "A driver may enable a line of the ARM control block by itself and put its own server on INTB_EXTER, without this library (for example a driver that falls back to its own server when the library is absent). The two live side by side: the library serves only the lines that it enabled, and when none of them rang it lets the INTB_EXTER chain go on (AICI_ForeignPasses counts these interrupts). The enable and disable registers change only the lines written with a 1, so neither side undoes the other.\n\nA line must not be shared that way. When a server of this library is added to a line that another driver enabled by itself, the last server of the library that is removed disables the line, and the other driver loses it. Such a driver should add its server through this library instead."
     }
   ],
   "versions": [
     [
-      "0.1",
-      "08.11.2026",
+      "0.3",
+      "09.11.2026",
       "First version."
     ]
   ],
@@ -56,7 +60,7 @@
           "doc": "the server: is_Code, is_Data, and ln_Pri for its place on the line"
         }
       ],
-      "function": "Adds the server to the line, by ln_Pri. When it is the first server of the line, the line is enabled: the server may be called before the function returns. The interrupt stays the caller's, and must not move or be freed before AIC_RemIntServer().\n\nAdding a server that is already on the line does nothing and returns AICERR_OK.\n\nThe first server of the library puts the server of the library on the INTB_EXTER chain of exec, at priority 100; the last one out takes it off.\n\nCall it from a task.",
+      "function": "Adds the server to the line, by ln_Pri. When it is the first server of the line, the line is enabled: the server may be called before the function returns. The interrupt stays the caller's, and must not move or be freed before AIC_RemIntServer().\n\nAdding a server that is already on the line does nothing and returns AICERR_OK.\n\nThe first server of the library puts the server of the library on the INTB_EXTER chain of exec, at priority 100; the last one out takes it off.\n\nThe first server also installs the reset guard (see WARM REBOOT), which opens keyboard.device and patches ColdReboot(). Where it cannot be installed, the server is added all the same, and the next server tries again.\n\nCall it from a task.",
       "results": [
         {
           "name": "error",
@@ -219,7 +223,7 @@
       "tags": [
         [
           "AICI_Version",
-          "(version << 16) | revision (controller)"
+          "the version in the upper word, the revision in the lower word (controller)"
         ],
         [
           "AICI_ControllerAddress",
@@ -235,7 +239,7 @@
         ],
         [
           "AICI_StaleLines",
-          "lines found enabled at the start, and disabled (controller)"
+          "lines found enabled at the start, left as they were (controller)"
         ],
         [
           "AICI_ServerCount",
@@ -248,6 +252,10 @@
         [
           "AICI_ForeignPasses",
           "level 6 interrupts in which none did (controller)"
+        ],
+        [
+          "AICI_ResetGuard",
+          "TRUE when the reset guard is installed (controller)"
         ],
         [
           "AICI_Enabled",

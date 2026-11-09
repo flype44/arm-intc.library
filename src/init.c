@@ -52,8 +52,8 @@ struct ArmIntcBase *AIC_LibInit(
         return NULL;
     }
 
-    /* No line of a session before (a warm reboot) stays enabled with nobody to serve it */
-    base->aib_StaleLines = AIC_CleanSlate(base);
+    /* The lines someone else enabled: counted, not touched (see AIC_CountEnabled()) */
+    base->aib_StaleLines = AIC_CountEnabled(base);
 
     /* The INTB_EXTER server: added to the chain with the first server of a line, taken off with the last one */
     base->aib_Dispatcher.is_Node.ln_Type = NT_INTERRUPT;

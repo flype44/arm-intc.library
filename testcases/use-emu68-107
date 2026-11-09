@@ -1,4 +1,0 @@
-; use-emu68-107: the next start of the Pi boots the Emu68 1.0.7 of CaffeineOS again (its own CONFIG.TXT).
-; CD to the folder of this script first. A reset of the Amiga does not restart the Pi: switch the Amiga off and on.
-Copy /CONFIG-107.TXT TO /CONFIG.TXT
-Echo "Emu68 1.0.7 at the next power on: switch the Amiga off and on."

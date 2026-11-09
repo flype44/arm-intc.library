@@ -256,25 +256,18 @@ static ULONG CountBits(
 }
 
 /*
-    At the start: the lines still enabled come from a session before a warm reboot of AmigaOS (the Pi did not restart and Emu68
-    enables none of them, src/aarch64/intc.c). Their servers are gone: each one is disabled before it can ring with nobody to clear
-    it, as Linux does ("Bootloader left irq enabled"). Returns how many there were.
+    At the start: how many lines are already enabled. Emu68 enables none of them (src/aarch64/intc.c): they belong to a driver that
+    drives the controller itself (a driver that falls back to its own server when this library is absent), or come from a session before a warm reboot that did not
+    go through the reset guard. The two cannot be told apart, so they are left as they are: disabling them would take its interrupt
+    away from a driver that works.
 */
-ULONG AIC_CleanSlate(
+ULONG AIC_CountEnabled(
     struct ArmIntcBase *base)
 {
     ULONG count = 0;
 
     for (ULONG bank = 0; bank < AIC_BANKS; bank++)
-    {
-        ULONG stale = aic_rd(base->aib_Controller, bank_enable[bank]) & bank_lines[bank];
-
-        if (stale != 0)
-        {
-            aic_wr(base->aib_Controller, bank_disable[bank], stale);
-            count += CountBits(stale);
-        }
-    }
+        count += CountBits(aic_rd(base->aib_Controller, bank_enable[bank]) & bank_lines[bank]);
 
     return count;
 }
@@ -304,4 +297,24 @@ void AIC_LineOff(
 
     __asm__ volatile ("and.l %1,%0" : "+m"(base->aib_Enabled[bank]) : "d"(~bit) : "cc");
     aic_wr(base->aib_Controller, bank_disable[bank], bit);
+}
+
+/*
+    Before a reset of AmigaOS (ColdReboot(), or Ctrl-Amiga-Amiga): the reset guard of emu68-common calls it once, maybe from an
+    interrupt. Every line the library enabled is disabled, so that none rings in the next session before a server is there to
+    clear its device: under Emu68 the Pi does not restart with AmigaOS. Writes to the controller only. The lines that other drivers
+    enabled by themselves are not touched.
+*/
+void AIC_PrepareReset(
+    APTR user)
+{
+    struct ArmIntcBase *base = user;
+
+    for (ULONG bank = 0; bank < AIC_BANKS; bank++)
+    {
+        ULONG lines = base->aib_Enabled[bank];
+
+        if (lines != 0)
+            aic_wr(base->aib_Controller, bank_disable[bank], lines);
+    }
 }

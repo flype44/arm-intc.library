@@ -20,7 +20,8 @@
     Called by the system with the base in A6, to remove the library: when the memory runs short ("Avail FLUSH") or on request. Done at
     once if nobody has it open and no line has a server, else later (the Close of the last opener). Gives the seglist to unload, or 0.
     A server belongs to an opener: with the library closed by everybody, none should be left. One that is left (a driver that did not
-    take it off) keeps the library, whose dispatcher still calls it.
+    take it off) keeps the library, whose dispatcher still calls it. The reset guard is removed last; it cannot be when a program
+    patched ColdReboot() after the library: the chain goes through the guard's code, and the library stays.
 */
 ULONG AIC_LibExpunge(
     REGARG(struct ArmIntcBase *base, "a6"))
@@ -28,7 +29,7 @@ ULONG AIC_LibExpunge(
     struct ExecBase *SysBase = base->aib_SysBase;
     BPTR seglist = 0;
 
-    if (base->aib_Lib.lib_OpenCnt == 0 && base->aib_ServerCount == 0)
+    if (base->aib_Lib.lib_OpenCnt == 0 && base->aib_ServerCount == 0 && (!base->aib_Guarded || reset_guard_remove(&base->aib_ResetGuard)))
     {
         ULONG neg = base->aib_Lib.lib_NegSize;
         ULONG pos = base->aib_Lib.lib_PosSize;

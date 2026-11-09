@@ -38,7 +38,7 @@
 #include "base.h"
 #include "hw.h"
 
-static const char version[] __attribute__((used)) = "$VER: aic-probe 0.3 (08.11.2026)";
+static const char version[] __attribute__((used)) = "$VER: aic-probe 0.4 (09.11.2026)";
 
 struct ExecBase *SysBase;
 struct DosLibrary *DOSBase;
@@ -445,7 +445,7 @@ static void TimerTest(APTR timer_node, ULONG timer, LONG count)
     aic_wr(ctrl, ARMCTRL_ENABLE1, bit);
     en = aic_rd(ctrl, ARMCTRL_ENABLE1);
     Print("  line enabled: ENABLE1 reads %08lx\n", en);
-    Verdict((en & bit) != 0, "ENABLE1 reads back the enabled line (the clean slate at start relies on it)");
+    Verdict((en & bit) != 0, "ENABLE1 reads back the enabled line (AICI_StaleLines relies on it)");
 
     for (i = 0; i < (ULONG)count && !probe.guard; i++)
     {
@@ -455,7 +455,7 @@ static void TimerTest(APTR timer_node, ULONG timer, LONG count)
 
         aic_wr(timer, ST_C1, target);
 
-        /* From now, not from the target: before the match CLO - target is a huge unsigned number (0.2 stopped here at once) */
+        /* From now, not from the target: before the match CLO - target is a huge unsigned number */
         while (probe.hits == hits && Elapsed(timer, start) < 100000)
             ;
 
@@ -519,7 +519,7 @@ int main(int wb, struct WBStartup *msg)
     if (count < 1 || count > 10000)
         count = 10;
 
-    Print("aic-probe 0.3: what arm-intc.library relies on\n");
+    Print("aic-probe 0.4: what arm-intc.library relies on\n");
 
     DeviceTreeBase = OpenResource((CONST_STRPTR)"devicetree.resource");
     if (DeviceTreeBase == NULL)

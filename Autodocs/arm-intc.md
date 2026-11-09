@@ -44,13 +44,25 @@ A line that rings 1000 times in a row and that no server claims is disabled by t
 
 ### Warm reboot
 
-When AmigaOS restarts and the Raspberry Pi does not, the lines that were enabled stay enabled. When it starts, the library disables every line that it finds enabled (AICI_StaleLines counts them). A driver clears its device before it adds its server.
+When AmigaOS restarts and the Raspberry Pi does not, the lines that were enabled stay enabled, with no server to clear their devices.
+
+The first server added installs a reset guard (reset_guard of emu68-common, by Rondoval). On ColdReboot() and on Ctrl-Amiga-Amiga it disables every line that the library enabled, once, before the reset goes on. The guard patches exec.library/ColdReboot() with SetFunction() and adds a reset handler to keyboard.device. AICI_ResetGuard tells whether it is installed. It stays until the library is expunged.
+
+When it starts, the library counts the lines that it finds enabled (AICI_StaleLines) and leaves them as they are. Such a line may belong to a driver that drives the controller itself (see OTHER DRIVERS).
+
+A driver clears its device before it adds its server.
+
+### Other drivers
+
+A driver may enable a line of the ARM control block by itself and put its own server on INTB_EXTER, without this library (for example a driver that falls back to its own server when the library is absent). The two live side by side: the library serves only the lines that it enabled, and when none of them rang it lets the INTB_EXTER chain go on (AICI_ForeignPasses counts these interrupts). The enable and disable registers change only the lines written with a 1, so neither side undoes the other.
+
+A line must not be shared that way. When a server of this library is added to a line that another driver enabled by itself, the last server of the library that is removed disables the line, and the other driver loses it. Such a driver should add its server through this library instead.
 
 ### Versions
 
 | Version | Date | Changes |
 |---|---|---|
-| 0.1 | 08.11.2026 | First version. |
+| 0.3 | 09.11.2026 | First version. |
 
 ## AIC_AddIntServer
 
@@ -70,6 +82,8 @@ Adds the server to the line, by ln_Pri. When it is the first server of the line,
 Adding a server that is already on the line does nothing and returns AICERR_OK.
 
 The first server of the library puts the server of the library on the INTB_EXTER chain of exec, at priority 100; the last one out takes it off.
+
+The first server also installs the reset guard (see WARM REBOOT), which opens keyboard.device and patches ColdReboot(). Where it cannot be installed, the server is added all the same, and the next server tries again.
 
 Call it from a task.
 
@@ -199,14 +213,15 @@ It may be called from an interrupt.
 
 | Tag | Meaning |
 |---|---|
-| `AICI_Version` | (version << 16) | revision (controller) |
+| `AICI_Version` | the version in the upper word, the revision in the lower word (controller) |
 | `AICI_ControllerAddress` | where the 68k sees the ARM control block (controller) |
 | `AICI_LocalAddress` | where the 68k sees the local controller (controller) |
 | `AICI_GpuRouting` | the GPU routing register of the local controller (controller) |
-| `AICI_StaleLines` | lines found enabled at the start, and disabled (controller) |
+| `AICI_StaleLines` | lines found enabled at the start, left as they were (controller) |
 | `AICI_ServerCount` | the servers of every line (controller) |
 | `AICI_Passes` | level 6 interrupts in which a line of the library rang (controller) |
 | `AICI_ForeignPasses` | level 6 interrupts in which none did (controller) |
+| `AICI_ResetGuard` | TRUE when the reset guard is installed (controller) |
 | `AICI_Enabled` | TRUE when the line is enabled (line) |
 | `AICI_Pending` | TRUE when the controller shows the line pending (line) |
 | `AICI_Servers` | the servers of the line (line) |

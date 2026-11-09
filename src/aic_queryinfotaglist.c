@@ -34,6 +34,7 @@ static BOOL ControllerInfo(
         case AICI_ServerCount:      *answer = base->aib_ServerCount; break;
         case AICI_Passes:           *answer = base->aib_Passes; break;
         case AICI_ForeignPasses:    *answer = base->aib_ForeignPasses; break;
+        case AICI_ResetGuard:       *answer = base->aib_Guarded; break;
         default:                    return FALSE;
     }
 

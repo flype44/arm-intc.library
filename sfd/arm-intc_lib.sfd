@@ -1,4 +1,4 @@
-==id $Id: arm-intc_lib.sfd 0.1 $
+==id $Id: arm-intc_lib.sfd 0.3 $
 * "arm-intc.library"
 ==base _ArmIntcBase
 ==basetype struct Library *

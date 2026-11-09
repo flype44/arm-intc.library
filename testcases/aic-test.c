@@ -11,9 +11,10 @@
     aic-test: arm-intc.library on the machine, through its calls only, with compare 1 of the system timer (line 33) as the line
     under test. The library is opened from a file (LIB=, a path: nothing is installed in LIBS:).
 
-      1. open, the answers about the controller
+      1. open, the answers about the controller; no reset guard yet; the open changed no enable register (lines that other
+         drivers enabled stay enabled)
       2. bad calls: each error code of the Autodoc
-      3. one server, N matches: each one served, counted, claimed
+      3. one server, N matches: each one served, counted, claimed; the first server installs the reset guard (ColdReboot() patched)
       4. a chain: a server of higher priority that never claims runs first, the one that claims after it; a third one of the
          highest priority that claims ends the walk before the others
       5. AIC_DisableInt() holds a match back, AIC_EnableInt() lets it ring
@@ -22,10 +23,22 @@
          AIC_EnableInt() must give it back
       VBLANK only: the vertical blank of the HDMI output, as VideoCore.card would take it on a VC4: pixelvalve 2
          (brcm,bcm2835-pixelvalve2, line 74), PV_INT_VFP_START, for 2 seconds. Skipped when the pixelvalve does not run.
-      8. the library expunged (as Avail FLUSH), line 33 left enabled by hand as a warm reboot would leave it, the library opened
-         again: its clean slate must find it and disable it
+      8. the library expunged (as Avail FLUSH), and the expunge gave ColdReboot() back; line 33 enabled by hand, as another
+         driver would, the library opened again: it counts the line (AICI_StaleLines one more) and leaves it enabled
+      REBOOT only, after every step passed: a server on line 33, then ColdReboot(). After the restart, "aic-probe" must show
+         ENABLE1 without line 33 (bit 1): the reset guard disabled it before the reset
 
-    Template: LIB/A,N/N,STORM/S,VBLANK/S
+    SHARED: the library already in memory, opened by another driver (dwc2usb.device and its USB line 41): it is opened by its
+      name, not loaded from LIB; the counts of step 1, 3 and 6 are taken from the servers already there; no expunge (step 8)
+      and no REBOOT. At the end the lines of the other driver must still have their servers, be enabled, not stormed, and
+      their count must have gone up (they kept ringing meanwhile).
+
+    Two more, alone (no test, LIB is not opened), for the counter-proof of REBOOT:
+      CONTROL: line 33 enabled by hand, no library, then ColdReboot(). After the restart aic-probe must show bit 1 of ENABLE1:
+         without the guard, a line survives the reset
+      LINEOFF: line 33 disabled by hand (after CONTROL)
+
+    Template: LIB/A,N/N,STORM/S,VBLANK/S,REBOOT/S,CONTROL/S,LINEOFF/S,SHARED/S
 */
 
 #include <exec/types.h>
@@ -43,12 +56,15 @@
 
 #include "hw.h"
 
-static const char version[] __attribute__((used)) = "$VER: aic-test 0.2 (08.11.2026)";
+static const char version[] __attribute__((used)) = "$VER: aic-test 0.5 (09.11.2026)";
 
 struct ExecBase *SysBase;
 struct DosLibrary *DOSBase;
 APTR DeviceTreeBase;
 struct Library *ArmIntcBase;
+
+/* SHARED: the servers of the other drivers when the test starts */
+static ULONG BaseServers;
 
 #define Print(fmt, ...)     do { Printf((CONST_STRPTR)(fmt), ##__VA_ARGS__); Flush(Output()); } while (0)
 
@@ -58,6 +74,7 @@ struct Library *ArmIntcBase;
 #define ST_M1               (1UL << 1)
 
 #define LINE                33          /* compare 1 of the system timer: bank 1, line 1 */
+#define ALL_LINES           96          /* SHARED: the lines read for the servers of other drivers */
 
 /* The pixelvalve (Linux: drivers/gpu/drm/vc4/vc4_regs.h; the same registers as on the BCM2711, where VideoCore.card uses them) */
 #define PV_CONTROL          0x00
@@ -334,6 +351,14 @@ static struct Library *OpenFromFile(const char *path, char *buffer, ULONG size)
     return named ? OpenLibrary((CONST_STRPTR)buffer, 0) : NULL;
 }
 
+/* Where the vector of exec.library/ColdReboot() jumps (JMP abs.l: the address follows the opcode) */
+#define LVO_COLDREBOOT      (-726)
+
+static APTR ColdRebootVector(void)
+{
+    return *(APTR *)((UBYTE *)SysBase + LVO_COLDREBOOT + 2);
+}
+
 static struct Library *FindLibrary(void)
 {
     struct Library *lib;
@@ -350,6 +375,8 @@ static void OneServer(LONG count)
 {
     ULONG i, served = 0, lat_sum = 0, lat_max = 0;
     ULONG passes = Query(AIC_CONTROLLER, AICI_Passes);
+    /* The counts of a line live as long as the library: SHARED finds those of the runs before */
+    ULONG count0 = Query(LINE, AICI_Count), unclaimed0 = Query(LINE, AICI_Unclaimed);
 
     Print("\n[3] one server on line %ld, %ld matches\n", (LONG)LINE, count);
 
@@ -357,9 +384,10 @@ static void OneServer(LONG count)
     aic_wr(Timer, ST_CS, ST_M1);
     CheckValue(AIC_AddIntServer(LINE, &int_a), AICERR_OK, "AIC_AddIntServer()");
     CheckValue(AIC_AddIntServer(LINE, &int_a), AICERR_OK, "the same server again (no change)");
+    CheckValue(Query(AIC_CONTROLLER, AICI_ResetGuard), TRUE, "AICI_ResetGuard after the first server");
     CheckValue(Query(LINE, AICI_Servers), 1, "AICI_Servers");
     CheckValue(Query(LINE, AICI_Enabled), TRUE, "AICI_Enabled");
-    CheckValue(Query(AIC_CONTROLLER, AICI_ServerCount), 1, "AICI_ServerCount");
+    CheckValue(Query(AIC_CONTROLLER, AICI_ServerCount), BaseServers + 1, "AICI_ServerCount");
 
     for (i = 0; i < (ULONG)count; i++)
     {
@@ -379,8 +407,8 @@ static void OneServer(LONG count)
     if (served)
         Print("  latency match -> server: mean %ld us, max %ld us\n", lat_sum / served, lat_max);
     CheckValue(srv_a.irq, LINE, "D0 of the server is the line");
-    CheckValue(Query(LINE, AICI_Count), served, "AICI_Count");
-    CheckValue(Query(LINE, AICI_Unclaimed), 0, "AICI_Unclaimed");
+    CheckValue(Query(LINE, AICI_Count) - count0, served, "AICI_Count, more by");
+    CheckValue(Query(LINE, AICI_Unclaimed) - unclaimed0, 0, "AICI_Unclaimed, more by");
     Check(Query(AIC_CONTROLLER, AICI_Passes) - passes >= served, "AICI_Passes went up by the matches at least");
     Print("  server calls %ld, passes %ld, foreign passes %ld\n", srv_a.calls,
         Query(AIC_CONTROLLER, AICI_Passes) - passes, Query(AIC_CONTROLLER, AICI_ForeignPasses));
@@ -450,20 +478,24 @@ static void DisableEnable(void)
 /* 6. The last server out */
 static void LastOut(void)
 {
-    ULONG passes;
+    ULONG passes, count;
 
     Print("\n[6] the last server out\n");
 
     CheckValue(AIC_RemIntServer(LINE, &int_a), AICERR_OK, "A removed");
     CheckValue(Query(LINE, AICI_Enabled), FALSE, "AICI_Enabled");
-    CheckValue(Query(AIC_CONTROLLER, AICI_ServerCount), 0, "AICI_ServerCount");
+    CheckValue(Query(AIC_CONTROLLER, AICI_ServerCount), BaseServers, "AICI_ServerCount");
     CheckValue(AIC_EnableInt(LINE), AICERR_NOSERVER, "AIC_EnableInt() with no server");
 
     passes = Query(AIC_CONTROLLER, AICI_Passes) + Query(AIC_CONTROLLER, AICI_ForeignPasses);
+    count = Query(LINE, AICI_Count);
     Fire(300);
     Wait_us(20000);
-    CheckValue(Query(AIC_CONTROLLER, AICI_Passes) + Query(AIC_CONTROLLER, AICI_ForeignPasses), passes,
-        "dispatcher calls with no server (it left INTB_EXTER)");
+    CheckValue(Query(LINE, AICI_Count), count, "AICI_Count of a match with no server");
+    /* With the servers of another driver the dispatcher stays in INTB_EXTER */
+    if (BaseServers == 0)
+        CheckValue(Query(AIC_CONTROLLER, AICI_Passes) + Query(AIC_CONTROLLER, AICI_ForeignPasses), passes,
+            "dispatcher calls with no server (it left INTB_EXTER)");
     aic_wr(Timer, ST_CS, ST_M1);
 }
 
@@ -471,6 +503,7 @@ static void LastOut(void)
 static void Storm(void)
 {
     ULONG start, took;
+    ULONG count0 = Query(LINE, AICI_Count), unclaimed0 = Query(LINE, AICI_Unclaimed);
 
     Print("\n[7] STORM: a server that neither claims nor clears the device\n");
 
@@ -486,9 +519,9 @@ static void Storm(void)
 
     CheckValue(Query(LINE, AICI_Stormed), TRUE, "AICI_Stormed");
     CheckValue(Query(LINE, AICI_Enabled), FALSE, "AICI_Enabled");
-    Print("  disabled after about %ld us; calls of the server %ld, AICI_Count %ld, AICI_Unclaimed %ld\n",
-        took, srv_s.calls, Query(LINE, AICI_Count), Query(LINE, AICI_Unclaimed));
-    Check(Query(LINE, AICI_Unclaimed) >= 1000, "AICI_Unclaimed reached the limit (1000)");
+    Print("  disabled after about %ld us; calls of the server %ld, AICI_Count +%ld, AICI_Unclaimed +%ld\n",
+        took, srv_s.calls, Query(LINE, AICI_Count) - count0, Query(LINE, AICI_Unclaimed) - unclaimed0);
+    Check(Query(LINE, AICI_Unclaimed) - unclaimed0 >= 1000, "AICI_Unclaimed reached the limit (1000)");
 
     aic_wr(Timer, ST_CS, ST_M1);
     CheckValue(AIC_EnableInt(LINE), AICERR_OK, "the device cleared, AIC_EnableInt()");
@@ -501,7 +534,7 @@ static void Storm(void)
 static void VBlank(void)
 {
     APTR node = FindCompatible("brcm,bcm2835-pixelvalve2");
-    ULONG pv, control, inten, start, took, rate;
+    ULONG pv, control, inten, start, took, rate, count0, unclaimed0;
     LONG irq;
 
     Print("\n[9] VBLANK: pixelvalve 2 (HDMI) through the library\n");
@@ -533,6 +566,8 @@ static void VBlank(void)
     srv_v.device = pv;
     srv_v.min = 0xffffffff;
     srv_v.max = 0;
+    count0 = Query(irq, AICI_Count);
+    unclaimed0 = Query(irq, AICI_Unclaimed);
     CheckValue(AIC_AddIntServer(irq, &int_v), AICERR_OK, "AIC_AddIntServer(74)");
 
     aic_wr(pv, PV_INTSTAT, PV_INT_VFP_START);
@@ -546,11 +581,11 @@ static void VBlank(void)
     rate = took >= 1000 ? srv_v.hits * 1000000 / (took / 1000) : 0;
     Print("  %ld vertical blanks in %ld us: %ld.%03ld Hz; between two: min %ld us, max %ld us\n", srv_v.hits, took,
         rate / 1000, rate % 1000, srv_v.hits > 1 ? srv_v.min : 0, srv_v.max);
-    Print("  server calls %ld, AICI_Count %ld, AICI_Unclaimed %ld\n", srv_v.calls, Query(irq, AICI_Count),
-        Query(irq, AICI_Unclaimed));
+    Print("  server calls %ld, AICI_Count +%ld, AICI_Unclaimed +%ld\n", srv_v.calls, Query(irq, AICI_Count) - count0,
+        Query(irq, AICI_Unclaimed) - unclaimed0);
     Check(rate >= 23000 && rate <= 121000, "one interrupt a frame (23 to 121 Hz)");
     CheckValue(Query(irq, AICI_Stormed), FALSE, "AICI_Stormed");
-    if (Query(irq, AICI_Unclaimed) != 0)
+    if (Query(irq, AICI_Unclaimed) != unclaimed0)
         Print("  note: some rings found PV_INTSTAT already cleared: the firmware may take this interrupt too\n");
 
     CheckValue(AIC_RemIntServer(irq, &int_v), AICERR_OK, "removed");
@@ -559,11 +594,14 @@ static void VBlank(void)
 
 int main(int wb, struct WBStartup *msg)
 {
-    LONG args[4] = { 0, 0, 0, 0 };
+    LONG args[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+    ULONG others[ALL_LINES], other_counts[ALL_LINES], irq;
     struct RDArgs *rd;
     static char path[256];
     APTR timer_node, mbox;
     ULONG controller, mem_before;
+    APTR coldreboot;
+    ULONG enables[3], stale;
     LONG count = 20;
     struct TagItem bad[2];
 
@@ -572,7 +610,7 @@ int main(int wb, struct WBStartup *msg)
     if (DOSBase == NULL || wb)
         return RETURN_FAIL;
 
-    rd = ReadArgs((CONST_STRPTR)"LIB/A,N/N,STORM/S,VBLANK/S", args, NULL);
+    rd = ReadArgs((CONST_STRPTR)"LIB/A,N/N,STORM/S,VBLANK/S,REBOOT/S,CONTROL/S,LINEOFF/S,SHARED/S", args, NULL);
     if (rd == NULL)
     {
         PrintFault(IoErr(), (CONST_STRPTR)"aic-test");
@@ -584,7 +622,7 @@ int main(int wb, struct WBStartup *msg)
     if (count < 1 || count > 10000)
         count = 20;
 
-    Print("aic-test 0.2: arm-intc.library through its calls\n");
+    Print("aic-test 0.5: arm-intc.library through its calls\n");
 
     DeviceTreeBase = OpenResource((CONST_STRPTR)"devicetree.resource");
     timer_node = DeviceTreeBase ? FindCompatible("brcm,bcm2835-system-timer") : NULL;
@@ -596,11 +634,50 @@ int main(int wb, struct WBStartup *msg)
         goto out;
     }
 
+    /* CONTROL and LINEOFF: alone */
+    if (args[6])
+    {
+        Print("\n[LINEOFF] ENABLE1 %08lx", aic_rd(0xf200b200, ARMCTRL_ENABLE1));
+        aic_wr(0xf200b200, ARMCTRL_DISABLE1, 1UL << (LINE & 31));
+        Print(", line %ld disabled by hand: ENABLE1 %08lx\n", (LONG)LINE, aic_rd(0xf200b200, ARMCTRL_ENABLE1));
+        goto out;
+    }
+    if (args[5])
+    {
+        Print("\n[CONTROL] line %ld enabled by hand, no library, then ColdReboot(): after the restart, aic-probe must show bit 1 of "
+            "ENABLE1\n", (LONG)LINE);
+        if (FindLibrary() != NULL)
+        {
+            Print("  [FAIL] arm-intc.library is in memory: its reset guard would disable the line\n");
+            Failures++;
+            goto out;
+        }
+        /* The next match more than an hour away; LINEOFF after the restart */
+        aic_wr(Timer, ST_CS, ST_M1);
+        aic_wr(Timer, ST_C1, Now() - 1);
+        aic_wr(0xf200b200, ARMCTRL_ENABLE1, 1UL << (LINE & 31));
+        Print("  ENABLE1 %08lx; ColdReboot() in 3 seconds\n", aic_rd(0xf200b200, ARMCTRL_ENABLE1));
+        Delay(150);
+        ColdReboot();
+    }
+
     /* 1. Open */
-    Print("\n[1] open %s\n", (LONG)args[0]);
-    Check(FindLibrary() == NULL, "not in memory before (a clean start)");
+    if (args[7])
+    {
+        Print("\n[1] SHARED: open the library already in memory\n");
+        Check(FindLibrary() != NULL, "in memory before (opened by another driver)");
+    }
+    else
+    {
+        Print("\n[1] open %s\n", (LONG)args[0]);
+        Check(FindLibrary() == NULL, "not in memory before (a clean start)");
+    }
+    coldreboot = ColdRebootVector();
+    enables[0] = aic_rd(0xf200b200, ARMCTRL_ENABLE0);
+    enables[1] = aic_rd(0xf200b200, ARMCTRL_ENABLE1);
+    enables[2] = aic_rd(0xf200b200, ARMCTRL_ENABLE2);
     mem_before = AvailMem(MEMF_ANY);
-    ArmIntcBase = OpenFromFile((const char *)args[0], path, sizeof(path));
+    ArmIntcBase = args[7] ? OpenLibrary((CONST_STRPTR)ARMINTCNAME, 0) : OpenFromFile((const char *)args[0], path, sizeof(path));
     if (ArmIntcBase == NULL)
     {
         Print("  [FAIL] cannot open %s\n", (LONG)args[0]);
@@ -613,7 +690,33 @@ int main(int wb, struct WBStartup *msg)
     Print("  controller %08lx, local %08lx, GPU routing %08lx, stale lines %ld\n", controller,
         Query(AIC_CONTROLLER, AICI_LocalAddress), Query(AIC_CONTROLLER, AICI_GpuRouting), Query(AIC_CONTROLLER, AICI_StaleLines));
     Check(controller == 0xf200b200, "the controller at F200B200 (as aic-probe found it)");
-    CheckValue(Query(AIC_CONTROLLER, AICI_ServerCount), 0, "AICI_ServerCount");
+    Check(aic_rd(controller, ARMCTRL_ENABLE0) == enables[0] && aic_rd(controller, ARMCTRL_ENABLE1) == enables[1] &&
+        aic_rd(controller, ARMCTRL_ENABLE2) == enables[2], "the open changed no enable register");
+    stale = Query(AIC_CONTROLLER, AICI_StaleLines);
+    if (args[7])
+    {
+        /* The lines of the other drivers, to compare at the end */
+        for (irq = 0; irq < ALL_LINES; irq++)
+        {
+            others[irq] = Query(irq, AICI_Servers);
+            if (others[irq] == 0xdeadbeef)
+                others[irq] = 0;
+            other_counts[irq] = others[irq] ? Query(irq, AICI_Count) : 0;
+            BaseServers += others[irq];
+            if (others[irq])
+                Print("  line %ld: %ld servers of another driver, count %ld, enabled %ld\n", (LONG)irq, others[irq],
+                    other_counts[irq], Query(irq, AICI_Enabled));
+        }
+        Check(BaseServers != 0 && others[LINE] == 0, "another driver has servers, none on line 33");
+        CheckValue(Query(AIC_CONTROLLER, AICI_ServerCount), BaseServers, "AICI_ServerCount, the servers of the other drivers");
+        CheckValue(Query(AIC_CONTROLLER, AICI_ResetGuard), TRUE, "AICI_ResetGuard, installed by their first server");
+    }
+    else
+    {
+        CheckValue(Query(AIC_CONTROLLER, AICI_ServerCount), 0, "AICI_ServerCount");
+        CheckValue(Query(AIC_CONTROLLER, AICI_ResetGuard), FALSE, "AICI_ResetGuard before the first server");
+    }
+    Check(ColdRebootVector() == coldreboot, "ColdReboot() not patched by the open");
 
     /* 2. Bad calls */
     Print("\n[2] bad calls\n");
@@ -652,15 +755,40 @@ int main(int wb, struct WBStartup *msg)
     if (args[3])
         VBlank();
 
-    /* 8. Expunge, then the clean slate of a new start */
-    Print("\n[8] expunge, and the clean slate at the next start\n");
+    /* SHARED: the lines of the other drivers kept ringing and were not touched; no expunge, no reboot */
+    if (args[7])
+    {
+        Print("\n[8] SHARED: the lines of the other drivers\n");
+        for (irq = 0; irq < ALL_LINES; irq++)
+        {
+            ULONG now;
+
+            if (others[irq] == 0)
+                continue;
+            now = Query(irq, AICI_Count);
+            Print("  line %ld: count %ld -> %ld, unclaimed %ld\n", (LONG)irq, other_counts[irq], now, Query(irq, AICI_Unclaimed));
+            CheckValue(Query(irq, AICI_Servers), others[irq], "its servers");
+            CheckValue(Query(irq, AICI_Enabled), TRUE, "enabled");
+            CheckValue(Query(irq, AICI_Stormed), FALSE, "not stormed");
+            Check(now != other_counts[irq], "it kept ringing (count went up)");
+        }
+        CheckValue(Query(AIC_CONTROLLER, AICI_ServerCount), BaseServers, "AICI_ServerCount back to theirs");
+        Check(ColdRebootVector() == coldreboot, "ColdReboot() as before");
+        if (args[4])
+            Print("  REBOOT skipped: not with another driver's servers\n");
+        goto out;
+    }
+
+    /* 8. Expunge, then a new start */
+    Print("\n[8] expunge, and a line enabled by another driver at the next start\n");
     CloseLibrary(ArmIntcBase);
     ArmIntcBase = NULL;
     FlushMemory();
     Check(FindLibrary() == NULL, "the library left the memory (expunged)");
+    Check(ColdRebootVector() == coldreboot, "the expunge gave ColdReboot() back");
     Print("  free memory before opening %ld, now %ld (others may allocate meanwhile)\n", mem_before, AvailMem(MEMF_ANY));
 
-    /* What a warm reboot leaves: the line enabled, nobody to serve it. The next match is more than an hour away. */
+    /* As another driver would (or a warm reboot without the guard): the line enabled. The next match is more than an hour away. */
     aic_wr(Timer, ST_CS, ST_M1);
     aic_wr(Timer, ST_C1, Now() - 1);
     aic_wr(0xf200b200, ARMCTRL_ENABLE1, 1UL << (LINE & 31));
@@ -674,13 +802,36 @@ int main(int wb, struct WBStartup *msg)
         Failures++;
         goto out;
     }
-    CheckValue(Query(AIC_CONTROLLER, AICI_StaleLines), 1, "AICI_StaleLines");
-    Check((aic_rd(0xf200b200, ARMCTRL_ENABLE1) & (1UL << (LINE & 31))) == 0, "the library disabled it at its start");
+    CheckValue(Query(AIC_CONTROLLER, AICI_StaleLines), stale + 1, "AICI_StaleLines, one more than at the first open");
+    Check((aic_rd(0xf200b200, ARMCTRL_ENABLE1) & (1UL << (LINE & 31))) != 0, "the library left it enabled");
+    aic_wr(0xf200b200, ARMCTRL_DISABLE1, 1UL << (LINE & 31));
     CloseLibrary(ArmIntcBase);
     ArmIntcBase = NULL;
     /* Out of memory again: the next run must find a clean start */
     FlushMemory();
     Check(FindLibrary() == NULL, "the library left the memory again (for the next run)");
+
+    /* REBOOT: the reset guard on a real ColdReboot(), only after everything else passed */
+    if (args[4] && Failures == 0)
+    {
+        Print("\n[REBOOT] a server on line %ld, then ColdReboot(): after the restart, aic-probe must show ENABLE1 without bit 1\n",
+            (LONG)LINE);
+        ArmIntcBase = OpenFromFile((const char *)args[0], path, sizeof(path));
+        if (ArmIntcBase == NULL)
+        {
+            Print("  [FAIL] cannot open it again\n");
+            Failures++;
+            goto out;
+        }
+        InitServer(&int_a, &srv_a, CLAIM, 0, "aic-test A");
+        aic_wr(Timer, ST_CS, ST_M1);
+        aic_wr(Timer, ST_C1, Now() - 1);
+        CheckValue(AIC_AddIntServer(LINE, &int_a), AICERR_OK, "AIC_AddIntServer()");
+        CheckValue(Query(AIC_CONTROLLER, AICI_ResetGuard), TRUE, "AICI_ResetGuard");
+        Print("  ENABLE1 %08lx; ColdReboot() in 3 seconds\n", aic_rd(0xf200b200, ARMCTRL_ENABLE1));
+        Delay(150);
+        ColdReboot();
+    }
 
 out:
     Print("\n%ld checks, %ld failed\n", (LONG)Checks, (LONG)Failures);

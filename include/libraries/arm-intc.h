@@ -10,7 +10,7 @@
 #ifndef LIBRARIES_ARM_INTC_H
 #define LIBRARIES_ARM_INTC_H
 /*
-**	$VER: arm-intc.h 0.1
+**	$VER: arm-intc.h 0.3
 **
 **	Public definitions of "arm-intc.library", the interrupt controller of the ARM side of the BCM2837 family
 **	(Raspberry Pi 3B, 3B+, 3A+, Zero 2 W, CM3) for PiStorm / Emu68: exec interrupt servers on the lines of the
@@ -61,10 +61,11 @@
 #define AICI_ControllerAddress  (AIC_Dummy + 2)     /* where the 68k sees the registers of the ARM control block */
 #define AICI_LocalAddress       (AIC_Dummy + 3)     /* where the 68k sees the local controller of the cores */
 #define AICI_GpuRouting         (AIC_Dummy + 4)     /* the GPU routing register of the local controller (bits 0-1: the core) */
-#define AICI_StaleLines         (AIC_Dummy + 5)     /* lines found enabled when the library started, and disabled */
+#define AICI_StaleLines         (AIC_Dummy + 5)     /* lines found enabled when the library started, left as they were */
 #define AICI_ServerCount        (AIC_Dummy + 6)     /* the servers of every line */
 #define AICI_Passes             (AIC_Dummy + 7)     /* level 6 interrupts in which a line of this library rang */
 #define AICI_ForeignPasses      (AIC_Dummy + 8)     /* level 6 interrupts in which none did (someone else's) */
+#define AICI_ResetGuard         (AIC_Dummy + 9)     /* TRUE when the reset guard is installed */
 
 /* AIC_QueryInfoTagList(irq, ...), about one line */
 #define AICI_Enabled            (AIC_Dummy + 32)    /* TRUE when the line is enabled */
